@@ -212,8 +212,10 @@ void solve(FILE *fin, FILE *fout)
     // **** calculate merkle root ****
 
     unsigned char merkle_root[32];
+    printf("Start build merkle root");
     calc_merkle_root(merkle_root, tx, merkle_branch);
-
+    printf("End build merkle root");
+    
     printf("merkle root(little): ");
     print_hex(merkle_root, 32);
     printf("\n");
@@ -269,6 +271,7 @@ void solve(FILE *fin, FILE *fout)
     
     SHA256 sha256_ctx;
     
+    printf("Start find nonce");
     for(block.nonce=0x00000000; block.nonce<=0xffffffff;++block.nonce)
     {   
         //sha256d
@@ -290,6 +293,7 @@ void solve(FILE *fin, FILE *fout)
             break;
         }
     }
+    printf("End find nonce");
     
 
     // print result
