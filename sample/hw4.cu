@@ -85,7 +85,7 @@ void print_hex(unsigned char* hex, size_t len)
 
 
 // print out binar array (from lowest value) in the hex format
-void print_hex_inverse(unsigned char* hex, size_t len)
+__host__ __device__ void print_hex_inverse(unsigned char* hex, size_t len)
 {
     for(int i=len-1;i>=0;--i)
     {
@@ -93,7 +93,7 @@ void print_hex_inverse(unsigned char* hex, size_t len)
     }
 }
 
-int little_endian_bit_comparison(const unsigned char *a, const unsigned char *b, size_t byte_len)
+__host__ __device__ int little_endian_bit_comparison(const unsigned char *a, const unsigned char *b, size_t byte_len)
 {
     // compared from lowest bit
     for(int i=byte_len-1;i>=0;--i)
@@ -116,7 +116,7 @@ void getline(char *str, size_t len, FILE *fp)
 
 ////////////////////////   Hash   ///////////////////////
 
-void double_sha256(SHA256 *sha256_ctx, unsigned char *bytes, size_t len)
+__host__ __device__ void double_sha256(SHA256 *sha256_ctx, unsigned char *bytes, size_t len)
 {
     SHA256 tmp;
     sha256(&tmp, (BYTE*)bytes, len);
@@ -180,6 +180,35 @@ void calc_merkle_root(unsigned char *root, int count, char **branch)
     delete[] list;
 }
 
+__global__ def test_nounce(HashBlock block, bool* discovered) {
+    SHA256 sha256_ctx;
+     //sha256d
+
+    if (not *discovered) {
+        int i = blockIdx.x * blockDim.x + threadIdx.x;
+        block.nonce = i
+
+        double_sha256(&sha256_ctx, (unsigned char*)&block, sizeof(block));
+        if(block.nonce % 1000000 == 0)
+        {
+            printf("hash #%10u (big): ", block.nonce);
+            print_hex_inverse(sha256_ctx.b, 32);
+            printf("\n");
+        }
+        
+        if(little_endian_bit_comparison(sha256_ctx.b, target_hex, 32) < 0)  // sha256_ctx < target_hex
+        {
+            printf("Found Solution!!\n");
+            printf("hash #%10u (big): ", block.nonce);
+            print_hex_inverse(sha256_ctx.b, 32);
+            printf("\n\n");
+
+            bool device_discovered = true;
+            cudaMemcpy(discovered, &device_discovered, sizeof(bool), cudaMemcpyDeviceToDevice);
+        }
+    }
+}
+
 
 void solve(FILE *fin, FILE *fout)
 {
@@ -212,9 +241,7 @@ void solve(FILE *fin, FILE *fout)
     // **** calculate merkle root ****
 
     unsigned char merkle_root[32];
-    printf("Start build merkle root");
     calc_merkle_root(merkle_root, tx, merkle_branch);
-    printf("End build merkle root");
     
     printf("merkle root(little): ");
     print_hex(merkle_root, 32);
@@ -270,8 +297,19 @@ void solve(FILE *fin, FILE *fout)
     // ********** find nonce **************
     
     SHA256 sha256_ctx;
+
+    const int Nx = 0xffffffff + 1;
+
+    dim3 threadsPerBlock (16 * 16);
+    dim3 numBlocks (Nx/threadsPerBlock.x);
+
+    bool host_discovered = false;
+    bool device_discovered;
+    cudaMemcpy(&discovered, &device_discovered, sizeof(bool), cudaMemcpyHostToDevice);
+
+    test_nounce<<<numBlocks, threadsPerBlock>>>(block, &device_discovered);
     
-    printf("Start find nonce");
+    '''
     for(block.nonce=0x00000000; block.nonce<=0xffffffff;++block.nonce)
     {   
         //sha256d
@@ -293,8 +331,6 @@ void solve(FILE *fin, FILE *fout)
             break;
         }
     }
-    printf("End find nonce");
-    
 
     // print result
 
@@ -307,6 +343,8 @@ void solve(FILE *fin, FILE *fout)
     printf("hash(big):    ");
     print_hex_inverse(sha256_ctx.b, 32);
     printf("\n\n");
+    
+    '''
 
     for(int i=0;i<4;++i)
     {
