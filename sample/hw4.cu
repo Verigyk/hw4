@@ -180,33 +180,45 @@ void calc_merkle_root(unsigned char *root, int count, char **branch)
     delete[] list;
 }
 
-__global__ def test_nounce(HashBlock block, bool* discovered) {
+__global__ void test_nounce(HashBlock block, volatile bool* discovered, unsigned char target_hex[], unsigned char* device_nonce, int offset) {
     SHA256 sha256_ctx;
      //sha256d
+	
+	volatile __shared__ bool someoneFoundIt;
+	if (threadIdx.x == 0) {someoneFoundIt = *discovered;}
+	__syncthreads();
 
-    if (not *discovered) {
+	if (!someoneFoundIt) {
         int i = blockIdx.x * blockDim.x + threadIdx.x;
-        block.nonce = i
+        //int j = blockIdx.y * blockDim.y + threadIdx.y;
+		
+		block.nonce = (unsigned char)(i + offset);
 
         double_sha256(&sha256_ctx, (unsigned char*)&block, sizeof(block));
         if(block.nonce % 1000000 == 0)
         {
             printf("hash #%10u (big): ", block.nonce);
-            print_hex_inverse(sha256_ctx.b, 32);
+			//print_hex_inverse(sha256_ctx.b, 32);
             printf("\n");
         }
         
         if(little_endian_bit_comparison(sha256_ctx.b, target_hex, 32) < 0)  // sha256_ctx < target_hex
         {
-            printf("Found Solution!!\n");
+			someoneFoundIt = true;
+			printf("Found Solution!!\n");
             printf("hash #%10u (big): ", block.nonce);
-            print_hex_inverse(sha256_ctx.b, 32);
+            //print_hex_inverse(sha256_ctx.b, 32);
             printf("\n\n");
 
-            bool device_discovered = true;
-            cudaMemcpy(discovered, &device_discovered, sizeof(bool), cudaMemcpyDeviceToDevice);
+			*device_nonce = (unsigned char)i;
         }
+
     }
+	__syncthreads();
+
+	if (threadIdx.x == 0 && someoneFoundIt) {
+		*discovered = true;
+	}
 }
 
 
@@ -298,18 +310,49 @@ void solve(FILE *fin, FILE *fout)
     
     SHA256 sha256_ctx;
 
-    const int Nx = 0xffffffff + 1;
+	//const uint64_t Nx = 0x0ffffffff + 1;
+	//printf("Valeur de Nx : %ld", Nx);
+	//const int Nx = 1024;
+
+	//const int max_size_grid = ;
+
+	int n = 16777216;
 
     dim3 threadsPerBlock (16 * 16);
-    dim3 numBlocks (Nx/threadsPerBlock.x);
+    dim3 numBlocks (4);
 
     bool host_discovered = false;
-    bool device_discovered;
-    cudaMemcpy(&discovered, &device_discovered, sizeof(bool), cudaMemcpyHostToDevice);
+    bool* device_discovered;
 
-    test_nounce<<<numBlocks, threadsPerBlock>>>(block, &device_discovered);
-    
-    '''
+	unsigned char* device_target_hex;
+	unsigned char* device_nonce;
+
+	unsigned char host_nonce[4];
+
+	cudaMalloc(&device_discovered, sizeof(bool));
+	cudaMalloc(&device_target_hex, sizeof(unsigned char) * 32);
+	cudaMalloc(&device_nonce, sizeof(unsigned char) * 4);
+
+    cudaMemcpy(device_discovered, &host_discovered, sizeof(bool), cudaMemcpyHostToDevice);
+	cudaMemcpy(device_target_hex, target_hex, sizeof(unsigned char) * 32, cudaMemcpyHostToDevice);
+
+	cudaDeviceSynchronize();
+
+	for(int offset = 0;offset < n;offset += 4){ 
+    	test_nounce<<<numBlocks, threadsPerBlock>>>(block, device_discovered, device_target_hex, device_nonce, offset * 16 * 16);
+		cudaDeviceSynchronize();
+		cudaMemcpy(&host_discovered, device_discovered, sizeof(bool), cudaMemcpyDeviceToHost);
+
+		if (host_discovered) {
+			break;
+		}
+	}
+
+	cudaDeviceSynchronize();
+
+	cudaMemcpy(host_nonce, device_nonce, sizeof(unsigned char) * 4, cudaMemcpyDeviceToHost);
+
+    /*
     for(block.nonce=0x00000000; block.nonce<=0xffffffff;++block.nonce)
     {   
         //sha256d
@@ -344,12 +387,18 @@ void solve(FILE *fin, FILE *fout)
     print_hex_inverse(sha256_ctx.b, 32);
     printf("\n\n");
     
-    '''
-
-    for(int i=0;i<4;++i)
+    */
+	
+	/*
+	for(int i=0;i<4;++i)
     {
         fprintf(fout, "%02x", ((unsigned char*)&block.nonce)[i]);
-    }
+    }*/
+
+	for (int i=0;i<4;++i)
+	{
+		fprintf(fout, "%02x", (host_nonce)[i]);
+	}
     fprintf(fout, "\n");
 
     delete[] merkle_branch;
