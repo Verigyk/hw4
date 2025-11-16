@@ -343,7 +343,7 @@ void calc_merkle_root(unsigned char *root, int count, char **branch)
 __constant__ HashBlock device_block;
 __constant__ unsigned char constant_target_hex[32];
 
-__global__ void test_nounce(volatile bool* discovered, int* device_nonce) {
+__global__ void test_nounce(bool* discovered, int* device_nonce) {
     SHA256 sha256_ctx;
 	
 	if (!*discovered) {
@@ -356,7 +356,7 @@ __global__ void test_nounce(volatile bool* discovered, int* device_nonce) {
         if(block.nonce % 1000000 == 0)
         {
             printf("hash #%10u (big): ", block.nonce);
-			//print_hex_inverse(sha256_ctx.b, 32);
+			print_hex_inverse(sha256_ctx.b, 32);
             printf("\n");
         }
         
@@ -365,7 +365,7 @@ __global__ void test_nounce(volatile bool* discovered, int* device_nonce) {
 			*discovered = true;
 			printf("Found Solution!!\n");
             printf("hash #%10u (big): ", block.nonce);
-            //print_hex_inverse(sha256_ctx.b, 32);
+            print_hex_inverse(sha256_ctx.b, 32);
             printf("\n\n");
 			*device_nonce = i;
         }
@@ -466,29 +466,32 @@ void solve(FILE *fin, FILE *fout)
     bool host_discovered = false;
     bool* device_discovered;
 
-	int* device_nonce;
+	int* device_nounce;
 
-	unsigned char host_nonce[4];
+	unsigned char host_nounce[4];
 
 	cudaMemcpyToSymbol(device_block, &block, sizeof(block), 0, cudaMemcpyHostToDevice);
 	cudaMemcpyToSymbol(constant_target_hex, &target_hex, sizeof(target_hex), 0, cudaMemcpyHostToDevice);
 
 	cudaMalloc(&device_discovered, sizeof(bool));
-	cudaMalloc(&device_nonce, sizeof(int));
+	cudaMalloc(&device_nounce, sizeof(int));
 
     cudaMemcpy(device_discovered, &host_discovered, sizeof(bool), cudaMemcpyHostToDevice);
 
-    test_nounce<<<numBlocks, threadsPerBlock>>>(device_discovered, device_nonce);
+    test_nounce<<<numBlocks, threadsPerBlock>>>(device_discovered, device_nounce);
 
 	cudaDeviceSynchronize();
 
-	cudaMemcpy(host_nonce, device_nonce, sizeof(unsigned char) * 4, cudaMemcpyDeviceToHost);
+	cudaMemcpy(host_nounce, device_nounce, sizeof(unsigned char) * 4, cudaMemcpyDeviceToHost);
 
 	for (int i=0;i<4;++i)
 	{
-		fprintf(fout, "%02x", host_nonce[i]);
+		fprintf(fout, "%02x", host_nounce[i]);
 	}
     fprintf(fout, "\n");
+
+	cudaFree(device_nounce);
+	cudaFree(device_discovered);
 
     delete[] merkle_branch;
     delete[] raw_merkle_branch;
